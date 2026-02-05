@@ -11,6 +11,29 @@ export default eventHandler(async (event) => {
   if (event.path === '/' && homeURL)
     return sendRedirect(event, homeURL)
 
+  if (slug?.startsWith('b:')) {
+    const encoded = slug.slice(2)
+    if (!encoded) {
+      throw createError({ statusCode: 400, statusMessage: 'Bad Request' })
+    }
+    const base64 = encoded.replace(/-/g, '+').replace(/_/g, '/')
+    const padding = base64.length % 4
+    const padded = padding ? base64 + '='.repeat(4 - padding) : base64
+    let decoded: string
+    try {
+      decoded = atob(padded)
+    }
+    catch {
+      throw createError({ statusCode: 400, statusMessage: 'Bad Request' })
+    }
+    const isAllowed = decoded.startsWith('http://') || decoded.startsWith('https://')
+    if (!isAllowed) {
+      throw createError({ statusCode: 400, statusMessage: 'Bad Request' })
+    }
+    const target = redirectWithQuery ? withQuery(decoded, getQuery(event)) : decoded
+    return sendRedirect(event, target, +redirectStatusCode)
+  }
+
   if (slug && !reserveSlug.includes(slug) && slugRegex.test(slug) && cloudflare) {
     const { KV } = cloudflare.env
 
