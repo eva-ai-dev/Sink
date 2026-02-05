@@ -1,31 +1,25 @@
-<script setup>
-import { useElementSize } from '@vueuse/core'
+<script setup lang="ts">
+import type { GlobeInstance } from 'globe.gl'
+import type { ColoData, CurrentLocation, GeoJSONData, LocationData } from '@/types'
+import type { TrafficEventParams } from '@/utils/events'
+import { useDebounceFn, useElementSize, watchDeep } from '@vueuse/core'
 import { scaleSequentialSqrt } from 'd3-scale'
 import { interpolateYlOrRd } from 'd3-scale-chromatic'
 import Globe from 'globe.gl'
-import { debounce } from 'lodash-es'
 import { MeshPhongMaterial } from 'three'
 
-const props = defineProps({
-  minutes: {
-    type: Number,
-    default: 60,
-  },
-})
+const realtimeStore = useDashboardRealtimeStore()
 
-const time = inject('time')
-const filters = inject('filters')
-
-const countries = ref({})
-const locations = ref([])
-const colos = ref({})
-const currentLocation = ref({})
+const countries = shallowRef<GeoJSONData>({ features: [] })
+const locations = shallowRef<LocationData[]>([])
+const colos = shallowRef<Record<string, ColoData>>({})
+const currentLocation = ref<CurrentLocation>({})
 
 const el = useTemplateRef('globeEl')
-const { width } = useElementSize(el)
+const { width, height } = useElementSize(el)
 const size = computed(() => ({
   width: width.value,
-  height: width.value > 768 ? width.value * 0.6 : width.value,
+  height: height.value || width.value,
 }))
 
 const globeEl = ref()
@@ -34,53 +28,87 @@ const highest = computed(() => {
   return locations.value.reduce((acc, curr) => Math.max(acc, curr.count), 0) || 1
 })
 
-let globe = null
+let globe: GlobeInstance | null = null
+const pendingTimeouts = new Set<ReturnType<typeof setTimeout>>()
+
+function safeTimeout(fn: () => void, delay: number) {
+  const id = setTimeout(() => {
+    pendingTimeouts.delete(id)
+    fn()
+  }, delay)
+  pendingTimeouts.add(id)
+}
+
+function clearAllTimeouts() {
+  pendingTimeouts.forEach(id => clearTimeout(id))
+  pendingTimeouts.clear()
+}
 
 async function getGlobeJSON() {
   const data = await $fetch('/countries.geojson')
-  countries.value = data
+  countries.value = data as GeoJSONData
 }
 
 async function getColosJSON() {
   const data = await $fetch('/colos.json')
-  colos.value = data
+  colos.value = data as Record<string, ColoData>
 }
 
 async function getCurrentLocation() {
-  const data = await useAPI('/api/location')
+  const data = await useAPI<CurrentLocation>('/api/location')
   currentLocation.value = data
 }
 
-async function getLiveLocations() {
-  const { data } = await useAPI('/api/logs/locations', {
-    query: {
-      startAt: time.value.startAt,
-      endAt: time.value.endAt,
-      ...filters.value,
-    },
-  })
-  locations.value = data?.map(e => ({
-    lat: e.latitude,
-    lng: e.longitude,
-    count: Math.max(1, +e.count / highest.value),
-  }))
+interface RawLocationData {
+  latitude: number
+  longitude: number
+  count: string | number
 }
 
-let cleanArcsDataTimer = null
+async function getLiveLocations() {
+  const result = await useAPI<{ data: RawLocationData[] }>('/api/logs/locations', {
+    query: {
+      startAt: realtimeStore.timeRange.startAt,
+      endAt: realtimeStore.timeRange.endAt,
+      ...realtimeStore.filters,
+    },
+  })
 
-function trafficEvent({ props }, { delay = 0 }) {
+  locations.value = result.data?.map(e => ({
+    lat: e.latitude,
+    lng: e.longitude,
+    count: +e.count,
+  })) || []
+}
+
+function trafficEvent({ props }: TrafficEventParams, { delay = 0 }: { delay?: number } = {}) {
+  if (!globe)
+    return
+
+  const { item } = props
+  if (item.latitude == null || item.longitude == null || !item.COLO) {
+    console.warn('Missing location data for traffic event', item)
+    return
+  }
+
   const arc = {
-    startLat: props.item.latitude,
-    startLng: props.item.longitude,
-    endLat: colos.value[props.item.COLO]?.lat,
-    endLng: colos.value[props.item.COLO]?.lon,
+    startLat: item.latitude,
+    startLng: item.longitude,
+    endLat: colos.value[item.COLO]?.lat,
+    endLng: colos.value[item.COLO]?.lon,
     color: 'darkOrange',
     arcAltitude: 0.2,
   }
-  console.info(`from ${props.item.city}(${arc.startLat}, ${arc.startLng}) to ${props.item.COLO}(${arc.endLat}, ${arc.endLng})`)
+
+  if (arc.endLat === undefined || arc.endLng === undefined) {
+    console.warn(`Missing COLO coordinates for ${item.COLO}`)
+    return
+  }
+
+  console.info(`from ${item.city}(${arc.startLat}, ${arc.startLng}) to ${item.COLO}(${arc.endLat}, ${arc.endLng})`)
   const isNear = Math.abs(arc.endLat - arc.startLat) < 5 && Math.abs(arc.endLng - arc.startLng) < 5
   if (isNear) {
-    console.info(`from ${props.item.city} to ${props.item.COLO} is near, skip`)
+    console.info(`from ${item.city} to ${item.COLO} is near, skip`)
     return
   }
   const random = Math.random()
@@ -92,36 +120,65 @@ function trafficEvent({ props }, { delay = 0 }) {
     .ringRepeatPeriod(delay * 2)
 
   const srcRing = { lat: arc.startLat, lng: arc.startLng }
-  globe.ringsData([...globe.ringsData(), srcRing])
-  setTimeout(() => globe.ringsData(globe.ringsData().filter(r => r !== srcRing)), delay * 2)
-
-  setTimeout(() => {
-    const targetRing = { lat: arc.endLat, lng: arc.endLng }
-    globe.ringsData([...globe.ringsData(), targetRing])
-    setTimeout(() => globe.ringsData(globe.ringsData().filter(r => r !== targetRing)), delay * 2)
+  globe.ringsData([...(globe.ringsData() as object[]), srcRing])
+  safeTimeout(() => {
+    if (globe) {
+      globe.ringsData((globe.ringsData() as object[]).filter(r => r !== srcRing))
+    }
   }, delay * 2)
 
-  clearTimeout(cleanArcsDataTimer)
-  cleanArcsDataTimer = setTimeout(() => {
-    globe.arcsData([])
+  safeTimeout(() => {
+    if (!globe)
+      return
+    const targetRing = { lat: arc.endLat, lng: arc.endLng }
+    globe.ringsData([...(globe.ringsData() as object[]), targetRing])
+    safeTimeout(() => {
+      if (globe) {
+        globe.ringsData((globe.ringsData() as object[]).filter(r => r !== targetRing))
+      }
+    }, delay * 2)
+  }, delay * 2)
+
+  safeTimeout(() => {
+    if (globe) {
+      globe.arcsData([])
+    }
   }, delay * 2)
 }
 
-const normalized = 5 / props.minutes
-const weightColor = scaleSequentialSqrt(interpolateYlOrRd).domain([0, highest.value * normalized * 15])
+function createWeightColor() {
+  const domainMax = highest.value * 3
+  return scaleSequentialSqrt(interpolateYlOrRd).domain([0, domainMax])
+}
+
+const debouncedControlsEnd = useDebounceFn(() => {
+  if (!globe)
+    return
+  const distance = Math.round(globe.controls().getDistance())
+  let nextAlt = 0.005
+  if (distance <= 300)
+    nextAlt = 0.001
+  else if (distance >= 600)
+    nextAlt = 0.02
+  if (nextAlt !== hexAltitude.value)
+    hexAltitude.value = nextAlt
+}, 200)
+
 function initGlobe() {
+  const weightColor = createWeightColor()
+
   globe = new Globe(globeEl.value)
     .width(size.value.width)
     .height(size.value.height)
     // .globeOffset([width.value > 768 ? -100 : 0, width.value > 768 ? 0 : 100])
-    .atmosphereColor('rgba(170, 170, 200, 0.8)')
+    .atmosphereColor('rgb(170, 170, 200)')
     .globeMaterial(new MeshPhongMaterial({
       color: 'rgb(228, 228, 231)',
       transparent: false,
       opacity: 1,
-    }))
+    }) as any)
     .backgroundColor('rgba(0,0,0,0)')
-    .hexPolygonsData(countries.value.features)
+    .hexPolygonsData(countries.value.features as object[])
     .hexPolygonResolution(3)
     .hexPolygonMargin(0.2)
     .hexBinResolution(3)
@@ -130,25 +187,20 @@ function initGlobe() {
     .hexBinMerge(true)
     .hexBinPointWeight('count')
     .hexPolygonColor(() => `rgba(54, 211, 153, ${Math.random() / 1.5 + 0.5})`)
-    .ringColor(() => t => `rgba(255,100,50,${1 - t})`)
+    .hexTopColor((d: { sumWeight: number }) => weightColor(d.sumWeight))
+    .hexSideColor((d: { sumWeight: number }) => weightColor(d.sumWeight))
+    .ringColor(() => (t: number) => `rgba(255,100,50,${1 - t})`)
     .ringMaxRadius(3)
     .ringPropagationSpeed(3)
     .onGlobeReady(() => {
+      if (!globe)
+        return
       globe.pointOfView({ lat: currentLocation.value.latitude, lng: currentLocation.value.longitude, altitude: width.value > 768 ? 2 : 3 })
       globe.controls().autoRotate = true
       globe.controls().autoRotateSpeed = 0.3
     })
 
-  globe.controls().addEventListener('end', debounce(() => {
-    const distance = Math.round(globe.controls().getDistance())
-    let nextAlt = 0.005
-    if (distance <= 300)
-      nextAlt = 0.001
-    else if (distance >= 600)
-      nextAlt = 0.02
-    if (nextAlt !== hexAltitude.value)
-      hexAltitude.value = nextAlt
-  }, 200))
+  globe.controls().addEventListener('end', debouncedControlsEnd)
 
   globalTrafficEvent.on(trafficEvent)
 }
@@ -159,11 +211,9 @@ function stopRotation() {
   }
 }
 
-watch([time, filters], getLiveLocations, {
-  deep: true,
-})
+watchDeep([() => realtimeStore.timeRange, () => realtimeStore.filters], getLiveLocations)
 
-watch(width, () => {
+watch([width, height], () => {
   if (globe) {
     globe.width(size.value.width)
     globe.height(size.value.height)
@@ -172,9 +222,10 @@ watch(width, () => {
 
 watch(locations, () => {
   if (globe) {
+    const weightColor = createWeightColor()
     globe.hexBinPointsData(locations.value)
-    globe.hexTopColor(d => weightColor(d.sumWeight))
-    globe.hexSideColor(d => weightColor(d.sumWeight))
+    globe.hexTopColor((d: { sumWeight: number }) => weightColor(d.sumWeight))
+    globe.hexSideColor((d: { sumWeight: number }) => weightColor(d.sumWeight))
   }
 })
 
@@ -189,8 +240,10 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  clearAllTimeouts()
   globalTrafficEvent.off(trafficEvent)
   if (globe) {
+    globe.controls().removeEventListener('end', debouncedControlsEnd)
     globe._destructor?.()
     globe = null
   }
@@ -198,5 +251,5 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div ref="globeEl" @mousedown="stopRotation" />
+  <div ref="globeEl" class="h-full w-full" @mousedown="stopRotation" />
 </template>

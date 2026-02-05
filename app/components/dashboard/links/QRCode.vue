@@ -1,27 +1,24 @@
-<script setup>
+<script setup lang="ts">
 import { Download } from 'lucide-vue-next'
 import QRCodeStyling from 'qr-code-styling'
 
-const props = defineProps({
-  data: {
-    type: String,
-    required: true,
-  },
-  image: {
-    type: String,
-    default: '',
-  },
+const props = withDefaults(defineProps<{
+  data: string
+  image?: string
+}>(), {
+  image: '',
 })
 const color = ref('#000000')
 const options = {
   width: 256,
   height: 256,
   data: props.data,
+  type: 'svg' as const,
   margin: 10,
-  qrOptions: { typeNumber: '0', mode: 'Byte', errorCorrectionLevel: 'Q' },
+  qrOptions: { typeNumber: 0 as const, mode: 'Byte' as const, errorCorrectionLevel: 'Q' as const },
   imageOptions: { hideBackgroundDots: true, imageSize: 0.4, margin: 2 },
-  dotsOptions: { type: 'dots', color: '#000000', gradient: null },
-  backgroundOptions: { color: '#ffffff', gradient: null },
+  dotsOptions: { type: 'dots' as const, color: '#000000' },
+  backgroundOptions: { color: '#ffffff' },
   image: props.image,
   dotsOptionsHelper: {
     colorType: { single: true, gradient: false },
@@ -33,7 +30,7 @@ const options = {
       rotation: '0',
     },
   },
-  cornersSquareOptions: { type: 'extra-rounded', color: '#000000' },
+  cornersSquareOptions: { type: 'extra-rounded' as const, color: '#000000' },
   cornersSquareOptionsHelper: {
     colorType: { single: true, gradient: false },
     gradient: {
@@ -44,7 +41,7 @@ const options = {
       rotation: '0',
     },
   },
-  cornersDotOptions: { type: 'dot', color: '#000000' },
+  cornersDotOptions: { type: 'dot' as const, color: '#000000' },
   cornersDotOptionsHelper: {
     colorType: { single: true, gradient: false },
     gradient: {
@@ -68,13 +65,13 @@ const options = {
 }
 
 const qrCode = new QRCodeStyling(options)
-const qrCodeEl = ref(null)
+const qrCodeEl = useTemplateRef<HTMLElement>('qrCodeEl')
 
-function updateColor(newColor) {
+function updateColor(newColor: string) {
   qrCode.update({
-    dotsOptions: { type: 'dots', color: newColor, gradient: null },
-    cornersSquareOptions: { type: 'extra-rounded', color: newColor },
-    cornersDotOptions: { type: 'dot', color: newColor },
+    dotsOptions: { type: 'dots' as const, color: newColor },
+    cornersSquareOptions: { type: 'extra-rounded' as const, color: newColor },
+    cornersDotOptions: { type: 'dot' as const, color: newColor },
   })
 }
 
@@ -91,7 +88,9 @@ function downloadQRCode() {
 }
 
 onMounted(() => {
-  qrCode.append(qrCodeEl.value)
+  if (qrCodeEl.value) {
+    qrCode.append(qrCodeEl.value as unknown as HTMLElement)
+  }
 })
 </script>
 
@@ -111,13 +110,13 @@ onMounted(() => {
             dark:border-gray-600
           "
           :style="{ backgroundColor: color }"
-          title="Change QR code color"
+          :title="$t('links.change_qr_color')"
         >
           <input
             v-model="color"
             type="color"
             class="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-            title="Change QR code color"
+            :title="$t('links.change_qr_color')"
           >
         </div>
       </div>

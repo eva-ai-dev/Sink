@@ -1,14 +1,8 @@
-<script setup>
-defineProps({
-  tabs: {
-    type: Array,
-    required: true,
-  },
-  rawTabs: {
-    type: Array,
-    required: true,
-  },
-})
+<script setup lang="ts">
+defineProps<{
+  tabs: readonly string[]
+  rawTabs: readonly string[]
+}>()
 </script>
 
 <template>
@@ -20,7 +14,7 @@ defineProps({
       <TabsTrigger
         v-for="(tab, index) in tabs"
         :key="tab"
-        :value="rawTabs[index]"
+        :value="rawTabs[index]!"
       >
         {{ tab }}
       </TabsTrigger>
@@ -28,11 +22,11 @@ defineProps({
     <TabsContent
       v-for="(tab, index) in tabs"
       :key="tab"
-      :value="rawTabs[index]"
+      :value="rawTabs[index]!"
       class="flex-1"
     >
       <DashboardAnalysisMetricsMetric
-        :type="rawTabs[index]"
+        :type="rawTabs[index]!"
         :name="tab"
         class="h-full"
       />

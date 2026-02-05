@@ -1,32 +1,33 @@
-<script setup>
+<script setup lang="ts">
+import type { CounterData } from '@/types'
 import NumberFlow from '@number-flow/vue'
 import { Flame, MousePointerClick, Users } from 'lucide-vue-next'
 
-const defaultData = Object.freeze({
+const defaultData: CounterData = Object.freeze({
   visits: 0,
   visitors: 0,
   referers: 0,
 })
 
-const counters = ref(defaultData)
+const counters = ref<CounterData>(defaultData)
 
-const id = inject('id')
-const time = inject('time')
-const filters = inject('filters')
+const id = inject(LINK_ID_KEY, computed(() => undefined))
+const analysisStore = useDashboardAnalysisStore()
+
 async function getLinkCounters() {
   counters.value = defaultData
-  const { data } = await useAPI('/api/stats/counters', {
+  const result = await useAPI<{ data: CounterData[] }>('/api/stats/counters', {
     query: {
       id: id.value,
-      startAt: time.value.startAt,
-      endAt: time.value.endAt,
-      ...filters.value,
+      startAt: analysisStore.dateRange.startAt,
+      endAt: analysisStore.dateRange.endAt,
+      ...analysisStore.filters,
     },
   })
-  counters.value = data?.[0]
+  counters.value = result.data?.[0] ?? defaultData
 }
 
-watch([time, filters], getLinkCounters, {
+watch([() => analysisStore.dateRange, () => analysisStore.filters], getLinkCounters, {
   deep: true,
 })
 
@@ -50,10 +51,12 @@ onMounted(async () => {
         <CardTitle class="text-sm font-medium">
           {{ $t('dashboard.visits') }}
         </CardTitle>
-        <MousePointerClick class="h-4 w-4 text-muted-foreground" />
+        <MousePointerClick
+          aria-hidden="true" class="h-4 w-4 text-muted-foreground"
+        />
       </CardHeader>
       <CardContent>
-        <NumberFlow class="text-2xl font-bold" :class="{ 'opacity-60 blur-md': !counters.visits }" :value="counters.visits" />
+        <NumberFlow class="text-2xl font-bold tabular-nums" :class="{ 'opacity-60 blur-md': !counters.visits }" :value="counters.visits" />
       </CardContent>
     </Card>
     <Card class="gap-0">
@@ -63,10 +66,10 @@ onMounted(async () => {
         <CardTitle class="text-sm font-medium">
           {{ $t('dashboard.visitors') }}
         </CardTitle>
-        <Users class="h-4 w-4 text-muted-foreground" />
+        <Users aria-hidden="true" class="h-4 w-4 text-muted-foreground" />
       </CardHeader>
       <CardContent>
-        <NumberFlow class="text-2xl font-bold" :class="{ 'opacity-60 blur-md': !counters.visitors }" :value="counters.visitors" />
+        <NumberFlow class="text-2xl font-bold tabular-nums" :class="{ 'opacity-60 blur-md': !counters.visitors }" :value="counters.visitors" />
       </CardContent>
     </Card>
     <Card class="gap-0">
@@ -76,10 +79,10 @@ onMounted(async () => {
         <CardTitle class="text-sm font-medium">
           {{ $t('dashboard.referers') }}
         </CardTitle>
-        <Flame class="h-4 w-4 text-muted-foreground" />
+        <Flame aria-hidden="true" class="h-4 w-4 text-muted-foreground" />
       </CardHeader>
       <CardContent>
-        <NumberFlow class="text-2xl font-bold" :class="{ 'opacity-60 blur-md': !counters.referers }" :value="counters.referers" />
+        <NumberFlow class="text-2xl font-bold tabular-nums" :class="{ 'opacity-60 blur-md': !counters.referers }" :value="counters.referers" />
       </CardContent>
     </Card>
   </div>

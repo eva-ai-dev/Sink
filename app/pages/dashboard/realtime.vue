@@ -1,6 +1,16 @@
+<script setup lang="ts">
+definePageMeta({
+  layout: 'dashboard',
+})
+</script>
+
 <template>
-  <main class="space-y-6">
-    <DashboardBreadcrumb title="Realtime" />
-    <DashboardRealtime />
+  <main
+    class="
+      w-full
+      md:h-full md:overflow-hidden
+    "
+  >
+    <LazyDashboardRealtime />
   </main>
 </template>

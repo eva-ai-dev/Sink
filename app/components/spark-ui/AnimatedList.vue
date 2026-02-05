@@ -1,6 +1,10 @@
 <script lang="ts" setup>
-import { computed, onMounted, ref, useSlots } from 'vue'
 import { cn } from '@/lib/utils'
+
+interface SlotItem {
+  props?: { key?: string | number } | null
+  [key: string]: unknown
+}
 
 const props = withDefaults(defineProps<{
   class?: string
@@ -13,7 +17,7 @@ const emit = defineEmits(['update:items'])
 
 const slots = useSlots()
 const index = ref(0)
-const slotsArray = ref<any>([])
+const slotsArray = ref<SlotItem[]>([])
 const maxShowItems = 100
 
 const itemsToShow = computed(() => {
@@ -26,7 +30,8 @@ watch([itemsToShow], () => {
 })
 
 async function loadComponents() {
-  slotsArray.value = slots.default ? slots.default()?.[0]?.children : []
+  const children = slots.default?.()?.[0]?.children
+  slotsArray.value = Array.isArray(children) ? children as unknown as SlotItem[] : []
 
   while (index.value < slotsArray.value.length) {
     index.value++
@@ -72,7 +77,7 @@ function getLeave() {
       damping: 40,
     },
   }
-};
+}
 
 onMounted(() => loadComponents())
 </script>
@@ -84,9 +89,9 @@ onMounted(() => loadComponents())
     >
       <div
         v-for="(item, idx) in itemsToShow"
-        :key="item.props.key"
+        :key="item.props?.key"
         v-motion
-        :initial="getInitial(idx)" :enter="getEnter(idx)" :leave="getLeave()"
+        :initial="getInitial(+idx)" :enter="getEnter(+idx)" :leave="getLeave()"
         :class="cn('mx-auto w-full')"
       >
         <component :is="item" />

@@ -1,86 +1,70 @@
-<script setup>
-import { now } from '@internationalized/date'
-import { useUrlSearchParams } from '@vueuse/core'
-import { safeDestr } from 'destr'
+<script setup lang="ts">
+import type { Link } from '@/types'
+import { getLocalTimeZone, now } from '@internationalized/date'
 
-defineProps({
-  link: {
-    type: Object,
-    default: () => null,
-  },
+withDefaults(defineProps<{
+  link?: Link | null
+}>(), {
+  link: null,
 })
 
-const searchParams = useUrlSearchParams('history')
+const analysisStore = useDashboardAnalysisStore()
+const tz = getLocalTimeZone()
 
-const time = ref({
-  startAt: date2unix(now().subtract({ days: 7 })),
-  endAt: date2unix(now()),
-})
+const viewMode = ref<'trend' | 'heatmap'>('trend')
+const heatmapMetric = ref<'visits' | 'visitors'>('visits')
 
-provide('time', time)
-
-function changeDate(dateRange) {
-  console.log('changeDate', dateRange)
-  // console.log('dashboard date', new Date(time[0] * 1000), new Date(time[1] * 1000))
-  time.value.startAt = dateRange[0]
-  time.value.endAt = dateRange[1]
-
-  searchParams.time = JSON.stringify(time.value)
-}
-
-const filters = ref({})
-
-provide('filters', filters)
-
-function changeFilter(type, value) {
-  console.log('changeFilter', type, value)
-  filters.value[type] = value
-
-  searchParams.filters = JSON.stringify(filters.value)
-}
-
-function restoreSearchParams() {
-  try {
-    if (searchParams.time) {
-      time.value = safeDestr(searchParams.time)
-    }
-    if (searchParams.filters) {
-      filters.value = safeDestr(searchParams.filters)
-    }
-  }
-  catch (error) {
-    console.error('restore searchParams error', error)
+function initDateRange() {
+  if (analysisStore.dateRange.startAt === 0) {
+    analysisStore.setDateRange([
+      date2unix(now(tz).subtract({ days: 7 })),
+      date2unix(now(tz)),
+    ])
   }
 }
 
 onBeforeMount(() => {
-  restoreSearchParams()
+  analysisStore.restoreFromUrl()
+  initDateRange()
 })
 </script>
 
 <template>
-  <main class="space-y-6">
-    <div
-      class="
-        flex flex-col gap-6
-        sm:flex-row sm:justify-between sm:gap-2
-      "
-    >
-      <DashboardNav class="flex-1">
-        <template
-          v-if="link"
-          #left
-        >
-          <h3 class="text-xl leading-10 font-bold">
-            {{ link.slug }} {{ $t('dashboard.stats') }}
-          </h3>
-        </template>
-        <DashboardDatePicker @update:date-range="changeDate" />
-      </DashboardNav>
-      <DashboardFilters v-if="!link" @change="changeFilter" />
+  <h3 v-if="link" class="text-xl leading-10 font-bold">
+    {{ link.slug }} {{ $t('dashboard.stats') }}
+  </h3>
+  <DashboardAnalysisCounters />
+  <Tabs v-model="viewMode" default-value="trend">
+    <div class="mb-4 flex items-center justify-between">
+      <TabsList>
+        <TabsTrigger value="trend">
+          {{ $t('dashboard.trend') }}
+        </TabsTrigger>
+        <TabsTrigger value="heatmap">
+          {{ $t('dashboard.weekly_trend') }}
+        </TabsTrigger>
+      </TabsList>
+
+      <Select v-if="viewMode === 'heatmap'" v-model="heatmapMetric">
+        <SelectTrigger class="h-8 w-[120px]">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="visits">
+            {{ $t('dashboard.visits') }}
+          </SelectItem>
+          <SelectItem value="visitors">
+            {{ $t('dashboard.visitors') }}
+          </SelectItem>
+        </SelectContent>
+      </Select>
     </div>
-    <DashboardAnalysisCounters />
-    <DashboardAnalysisViews />
-    <DashboardAnalysisMetrics />
-  </main>
+    <TabsContent value="trend" class="mt-0">
+      <DashboardAnalysisViews v-if="viewMode === 'trend'" />
+    </TabsContent>
+    <TabsContent value="heatmap" class="mt-0">
+      <DashboardAnalysisHeatmap v-if="viewMode === 'heatmap'" :metric="heatmapMetric" />
+    </TabsContent>
+  </Tabs>
+  <DashboardAnalysisMetrics />
 </template>
